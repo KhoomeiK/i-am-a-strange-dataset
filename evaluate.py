@@ -7,7 +7,7 @@ from string import Template
 from langchain.llms import Anthropic
 from dotenv import dotenv_values
 from openai import OpenAI
-import torch
+# import torch
 import time
 
 ANTHROPIC_API_KEY = dotenv_values(".env").get("ANTHROPIC_API_KEY", None)
@@ -64,26 +64,37 @@ else:
             raise ValueError("You are trying to use claude-2, but your ANTHROPIC_API_KEY is not set in a .env file.")
         kwargs_for_non_cot = {"max_tokens_to_sample": 2}
         model = Anthropic(model="claude-2", anthropic_api_key=ANTHROPIC_API_KEY)
-    elif args.model == "gpt-4" or args.model == "gpt-4-1106-preview" or args.model == "gpt-3.5-turbo":
+    elif args.model == "gpt-4" or args.model == "gpt-4-1106-preview" or args.model == "gpt-3.5-turbo" or "o1" in args.model or "gpt-4o" in args.model:
         if OPENAI_API_KEY is None:
             raise ValueError("You are trying to use gpt-4, but your OPENAI_API_KEY is not set in a .env file.")
         os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY
         client = OpenAI()
         kwargs_for_non_cot = {"max_tokens": 2, "top_logprobs": 5, "logprobs": True}
-        def model(message, max_tokens=None, logprobs=None, top_logprobs=None, temperature=0):
+        def model(message, max_tokens=None, logprobs=None, top_logprobs=None, temperature=1):
+            if max_tokens:
+                completion = client.chat.completions.create(
+                    # temperature=temperature,
+                    # logprobs=logprobs,
+                    max_tokens=max_tokens,
+                    # top_logprobs=top_logprobs,
+                    model=args.model,
+                    messages=[
+                        {"role": "user", "content": message}
+                    ],
+                )
+                return completion
+            
             completion = client.chat.completions.create(
-                temperature=temperature,
-                logprobs=logprobs,
-                max_tokens=max_tokens,
-                top_logprobs=top_logprobs,
+                # temperature=temperature,
+                # logprobs=logprobs,
+                # max_tokens=max_tokens,
+                # top_logprobs=top_logprobs,
                 model=args.model,
                 messages=[
                     {"role": "user", "content": message}
                 ],
             )
-            if max_tokens==None:
-                return completion.choices[0].message.content
-            return completion
+            return completion.choices[0].message.content
     else:
         raise ValueError(f"{args.model} is not a supported model for our evaluation yet when using the api_model option.")
 
@@ -199,10 +210,10 @@ for datum in tqdm(data_list):
                     break
             return loss
 
-        generated_text_true_statement_cot = model(true_statement_cot, temperature=0)
-        generated_text_false_statement_cot = model(false_statement_cot, temperature=0)
+        generated_text_true_statement_cot = model(true_statement_cot, temperature=1)
+        generated_text_false_statement_cot = model(false_statement_cot, temperature=1)
 
-        time.sleep(1)  # For rate limits.
+        # time.sleep(1)  # For rate limits.
 
         validation_outputs.append({
             "id": datum["id"],
@@ -210,34 +221,30 @@ for datum in tqdm(data_list):
             "generated_text_false_statement_cot": generated_text_false_statement_cot,
         })
 
-        if args.api_has_logprobs:
-            # Few shot prompt
-            true_statement_few_shot = few_shot_template.substitute(**few_shot_prompt_data_dict, example=true_statement, answer="")
-            false_statement_few_shot = few_shot_template.substitute(**few_shot_prompt_data_dict, example=false_statement, answer="")
+        # if args.api_has_logprobs:
+        # Few shot prompt
+        true_statement_few_shot = few_shot_template.substitute(**few_shot_prompt_data_dict, example=true_statement, answer="")
+        false_statement_few_shot = few_shot_template.substitute(**few_shot_prompt_data_dict, example=false_statement, answer="")
 
-            # Zero shot prompt
-            true_statement_zero_shot = zero_shot_template.substitute(example=true_statement, answer="")
-            false_statement_zero_shot = zero_shot_template.substitute(example=false_statement, answer="")
+        # Zero shot prompt
+        true_statement_zero_shot = zero_shot_template.substitute(example=true_statement, answer="")
+        false_statement_zero_shot = zero_shot_template.substitute(example=false_statement, answer="")
 
-            generated_text_true_statement_zero_shot = model(true_statement_zero_shot, temperature=0, **kwargs_for_non_cot)
-            generated_text_false_statement_zero_shot = model(false_statement_zero_shot, temperature=0, **kwargs_for_non_cot)
+        generated_text_true_statement_zero_shot = model(true_statement_zero_shot, temperature=1)
+        generated_text_false_statement_zero_shot = model(false_statement_zero_shot, temperature=1)
 
-            generated_text_true_statement_few_shot = model(true_statement_few_shot, temperature=0, **kwargs_for_non_cot)
-            generated_text_false_statement_few_shot = model(false_statement_few_shot, temperature=0, **kwargs_for_non_cot)
+        generated_text_true_statement_few_shot = model(true_statement_few_shot, temperature=1)
+        generated_text_false_statement_few_shot = model(false_statement_few_shot, temperature=1)
 
-            validation_outputs[-1]["loss_true_statement_true_answer_few_shot"] = get_api_loss("true", generated_text_true_statement_few_shot)
-            validation_outputs[-1]["loss_true_statement_false_answer_few_shot"] = get_api_loss("false", generated_text_true_statement_few_shot)
-            validation_outputs[-1]["loss_false_statement_true_answer_few_shot"] = get_api_loss("true", generated_text_false_statement_few_shot)
-            validation_outputs[-1]["loss_false_statement_false_answer_few_shot"] = get_api_loss("false", generated_text_false_statement_few_shot)
-            validation_outputs[-1]["loss_true_statement_true_answer_zero_shot"] = get_api_loss("true", generated_text_true_statement_zero_shot)
-            validation_outputs[-1]["loss_true_statement_false_answer_zero_shot"] = get_api_loss("false", generated_text_true_statement_zero_shot)
-            validation_outputs[-1]["loss_false_statement_true_answer_zero_shot"] = get_api_loss("true", generated_text_false_statement_zero_shot)
-            validation_outputs[-1]["loss_false_statement_false_answer_zero_shot"] = get_api_loss("false", generated_text_false_statement_zero_shot)
+        validation_outputs[-1]["generated_text_true_statement_few_shot"] = generated_text_true_statement_few_shot
+        validation_outputs[-1]["generated_text_false_statement_few_shot"] = generated_text_false_statement_few_shot
+        validation_outputs[-1]["generated_text_true_statement_zero_shot"] = generated_text_true_statement_zero_shot
+        validation_outputs[-1]["generated_text_false_statement_zero_shot"] = generated_text_false_statement_zero_shot
 
         if non_self_referential:
 
-            non_self_referential_generated_text_true_statement_cot = model(non_self_referential_true_statement_cot, temperature=0)
-            non_self_referential_generated_text_false_statement_cot = model(non_self_referential_false_statement_cot, temperature=0)
+            non_self_referential_generated_text_true_statement_cot = model(non_self_referential_true_statement_cot, temperature=1)
+            non_self_referential_generated_text_false_statement_cot = model(non_self_referential_false_statement_cot, temperature=1)
 
             validation_outputs[-1]["non_self_referential_generated_text_true_statement_cot"] = non_self_referential_generated_text_true_statement_cot
             validation_outputs[-1]["non_self_referential_generated_text_false_statement_cot"] = non_self_referential_generated_text_false_statement_cot
@@ -251,20 +258,16 @@ for datum in tqdm(data_list):
                 non_self_referential_true_statement_zero_shot = non_self_referential_zero_shot_template.substitute(example=non_self_referential_true_statement, answer="")
                 non_self_referential_false_statement_zero_shot = non_self_referential_zero_shot_template.substitute(example=non_self_referential_false_statement, answer="")
 
-                non_self_referential_generated_text_true_statement_zero_shot = model(non_self_referential_true_statement_zero_shot, temperature=0, **kwargs_for_non_cot)
-                non_self_referential_generated_text_false_statement_zero_shot = model(non_self_referential_false_statement_zero_shot, temperature=0, **kwargs_for_non_cot)
+                non_self_referential_generated_text_true_statement_zero_shot = model(non_self_referential_true_statement_zero_shot, temperature=1, **kwargs_for_non_cot)
+                non_self_referential_generated_text_false_statement_zero_shot = model(non_self_referential_false_statement_zero_shot, temperature=1, **kwargs_for_non_cot)
 
-                non_self_referential_generated_text_true_statement_few_shot = model(non_self_referential_true_statement_few_shot, temperature=0, **kwargs_for_non_cot)
-                non_self_referential_generated_text_false_statement_few_shot = model(non_self_referential_false_statement_few_shot, temperature=0, **kwargs_for_non_cot)
+                non_self_referential_generated_text_true_statement_few_shot = model(non_self_referential_true_statement_few_shot, temperature=1, **kwargs_for_non_cot)
+                non_self_referential_generated_text_false_statement_few_shot = model(non_self_referential_false_statement_few_shot, temperature=1, **kwargs_for_non_cot)
 
-                validation_outputs[-1]["non_self_referential_loss_true_statement_true_answer_few_shot"] = get_api_loss("true", non_self_referential_generated_text_true_statement_few_shot)
-                validation_outputs[-1]["non_self_referential_loss_true_statement_false_answer_few_shot"] = get_api_loss("false", non_self_referential_generated_text_true_statement_few_shot)
-                validation_outputs[-1]["non_self_referential_loss_false_statement_true_answer_few_shot"] = get_api_loss("true", non_self_referential_generated_text_false_statement_few_shot)
-                validation_outputs[-1]["non_self_referential_loss_false_statement_false_answer_few_shot"] = get_api_loss("false", non_self_referential_generated_text_false_statement_few_shot)
-                validation_outputs[-1]["non_self_referential_loss_true_statement_true_answer_zero_shot"] = get_api_loss("true", non_self_referential_generated_text_true_statement_zero_shot)
-                validation_outputs[-1]["non_self_referential_loss_true_statement_false_answer_zero_shot"] = get_api_loss("false", non_self_referential_generated_text_true_statement_zero_shot)
-                validation_outputs[-1]["non_self_referential_loss_false_statement_true_answer_zero_shot"] = get_api_loss("true", non_self_referential_generated_text_false_statement_zero_shot)
-                validation_outputs[-1]["non_self_referential_loss_false_statement_false_answer_zero_shot"] = get_api_loss("false", non_self_referential_generated_text_false_statement_zero_shot)
+                validation_outputs[-1]["non_self_referential_generated_text_true_statement_few_shot"] = non_self_referential_generated_text_true_statement_few_shot
+                validation_outputs[-1]["non_self_referential_generated_text_false_statement_few_shot"] = non_self_referential_generated_text_false_statement_few_shot
+                validation_outputs[-1]["non_self_referential_generated_text_true_statement_zero_shot"] = non_self_referential_generated_text_true_statement_zero_shot
+                validation_outputs[-1]["non_self_referential_generated_text_false_statement_zero_shot"] = non_self_referential_generated_text_false_statement_zero_shot
             
         # Write the outputs separately here as we go, because APIs are expensive and if they go down, we still want something to show for it.
         write_jsonl(validation_outputs, f"{args.model.split('/')[-1]}_validation_outputs.jsonl")
